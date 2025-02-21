@@ -468,8 +468,8 @@ static int fetch_refs_via_pack(struct transport *transport,
 	args.reject_shallow_remote = transport->smart_options->reject_shallow;
 	args.object_info = transport->smart_options->object_info;
 
-	if (transport->smart_options->object_info
-	    && transport->smart_options->object_info_oids->nr > 0) {
+	if (transport->smart_options->object_info &&
+	    transport->smart_options->object_info_oids->nr > 0) {
 		struct packet_reader reader;
 		struct object_info_args obj_info_args = { 0 };
 
@@ -480,9 +480,9 @@ static int fetch_refs_via_pack(struct transport *transport,
 
 		connect_setup(transport, 0);
 		packet_reader_init(&reader, data->fd[0], NULL, 0,
-				PACKET_READ_CHOMP_NEWLINE |
-				PACKET_READ_GENTLE_ON_EOF |
-				PACKET_READ_DIE_ON_ERR_PACKET);
+				   PACKET_READ_CHOMP_NEWLINE |
+				   PACKET_READ_GENTLE_ON_EOF |
+				   PACKET_READ_DIE_ON_ERR_PACKET);
 
 		data->version = discover_version(&reader);
 		transport->hash_algo = reader.hash_algo;
