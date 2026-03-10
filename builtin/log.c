@@ -1332,7 +1332,6 @@ static void make_cover_letter(struct rev_info *rev, int use_separate_file,
 			      const struct format_config *cfg)
 {
 	const char *from;
-	struct shortlog log;
 	struct strbuf sb = STRBUF_INIT;
 	int i;
 	const char *encoding = "UTF-8";
@@ -1340,6 +1339,8 @@ static void make_cover_letter(struct rev_info *rev, int use_separate_file,
 	struct pretty_print_context pp = {0};
 	struct commit *head = list[0];
 	char *to_free = NULL;
+	struct strbuf oneline = STRBUF_INIT;
+	struct pretty_print_context ctx = {0};
 
 	if (!cmit_fmt_is_mail(rev->commit_format))
 		die(_("cover letter needs email format"));
@@ -1376,18 +1377,17 @@ static void make_cover_letter(struct rev_info *rev, int use_separate_file,
 	free(pp.after_subject);
 	strbuf_release(&sb);
 
-	shortlog_init(&log);
-	log.wrap_lines = 1;
-	log.wrap = MAIL_DEFAULT_WRAP;
-	log.in1 = 2;
-	log.in2 = 4;
-	log.file = rev->diffopt.file;
-	log.groups = SHORTLOG_GROUP_AUTHOR;
-	shortlog_finish_setup(&log);
-	for (i = 0; i < nr; i++)
-		shortlog_add_commit(&log, list[i]);
+	ctx.fmt = CMIT_FMT_USERFORMAT;
+	ctx.output_encoding = get_log_output_encoding();
 
-	shortlog_output(&log);
+	for (i = nr - 1; i >= 0; i--) {
+		strbuf_reset(&oneline);
+		repo_format_commit_message(the_repository, list[i], "%s", &oneline, &ctx);
+		fprintf(rev->diffopt.file, "  [%d/%d]: %s\n", nr - i, nr, oneline.buf);
+	}
+	fprintf(rev->diffopt.file, "\n");
+
+	strbuf_release(&oneline);
 
 	/* We can only do diffstat with a unique reference point */
 	if (origin)
