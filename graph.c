@@ -66,6 +66,7 @@ enum graph_state {
 	GRAPH_PADDING,
 	GRAPH_SKIP,
 	GRAPH_PRE_COMMIT,
+	GRAPH_PRE_ROOT,
 	GRAPH_COMMIT,
 	GRAPH_POST_MERGE,
 	GRAPH_COLLAPSING
@@ -315,6 +316,27 @@ struct git_graph {
 	 * diff_output_prefix_callback().
 	 */
 	struct strbuf prefix_buf;
+
+	/*
+	 * If a commit is a visual root and still has commits to render, it
+	 * needs to be indented to avoid having them vertically adjacent, seeming
+	 * that they are related.
+	 */
+	unsigned is_visual_root:1;
+
+	/*
+	 * Indentation increases for each visual root adjacent
+	 * to another visual root, making visual root commits indentation
+	 * to cascade.
+	 */
+	unsigned int visual_root_depth;
+
+	/*
+	 * When a visual root is adjacent n others visual roots, the first one
+	 * can avoid indentation and the rest cascades, increasing the indentation
+	 * for each one.
+	 */
+	unsigned cascade:1;
 };
 
 static const char *diff_output_prefix_callback(struct diff_options *opt, void *data)
@@ -379,6 +401,8 @@ struct git_graph *graph_init(struct rev_info *opt)
 	graph->num_columns = 0;
 	graph->num_new_columns = 0;
 	graph->mapping_size = 0;
+	graph->visual_root_depth = 0;
+	graph->cascade = 0;
 	/*
 	 * Start the column color at the maximum value, since we'll
 	 * always increment it for the first commit we output.
@@ -741,9 +765,115 @@ static int graph_needs_pre_commit_line(struct git_graph *graph)
 	       graph->expansion_row < graph_num_expansion_rows(graph);
 }
 
+/*
+ * A commit can be a visual root when:
+ * - It has no parents; It has parents but they are all filtered out and
+ *   commit->parents arrives NULL.
+ *
+ * - It is not a boundary commit. Boundary commits also have no visible
+ *   parents, but they are NOT a visual root:
+ *
+ *   1. A boundary only appears because an included commit is its child.
+ *      Children are always above, and the renderer draws an edge down to
+ *      the boundary from that child. Rather than starting a column like a
+ *      visual root would do, it inherits its child column.
+ *
+ *   2. Included commits cannot appear below a boundary. Boundaries are
+ *      ancestors of the exclusion point; if an included commit were an
+ *      ancestor of the boundary it would be excluded and not rendered.
+ *      Boundaries therefore always sink to the bottom.
+ */
+static int graph_is_visual_root_candidate(struct commit *c)
+{
+	return c->parents == NULL && !(c->object.flags & BOUNDARY);
+}
+
+static int graph_is_visual_root(struct git_graph *graph, unsigned int is_next_visible)
+{
+	/*
+	 * This must be only called for the current commit as graph contains
+	 * the state for the current commit only.
+	 *
+	 * To check if a commit is a visual root, call graph_is_visual_root_candidate()
+	 * but we won't know if it is really a visual root until we get to the
+	 * next commit state.
+	 *
+	 * the current commit is an actual visual root if it is a candidate and
+	 * the commit is not a parent of a merge (num_new_columns == 0).
+	 *
+	 *   *
+	 *   |\
+	 *   | *    <- it is a visual root and next is visible but it shouldn't
+	 *   *         be indented because nothing is rendered below it.
+	 *   ^         if num_new_columns > 0 means we're on a merge parent.
+	 *   |
+	 *   `-------- if !is_next_visible means we're on the last commit, avoid
+	 *             indentation unless the one before is a visual root, then
+	 *             we need to differentiate from the one above
+	 */
+	return graph_is_visual_root_candidate(graph->commit) &&
+	       graph->num_new_columns == 0 && is_next_visible;
+}
+
+/*
+ * Iterates the commits queue searching for the next visible commit, once found
+ * sets visibleness and visual-root flags.
+ * Knowing if the next commit is also a visual root avoids redundant indentations
+ *
+ * NEEDSWORK: The queue is actively being modified by the walker, for each commit
+ * its parents and itself get simplified and their flags set, but for the next
+ * unrelated commit or the grandparents they are not simplified yet, which means
+ * that a commit whose parents are all filtered will not be marked as a visual
+ * root candidate at the lookahead.
+ * This causes the lookahead to fail, failing to set the cascade flag to avoid
+ * redundant indentations.
+ * See 'test_expect_failure' at t4218-log-graph-indentation.sh.
+ */
+static void graph_peek_next_visible(struct git_graph *graph, unsigned int *is_next_visible,
+				    unsigned int *next_is_visual_root)
+{
+	struct commit_list *cl;
+
+	*is_next_visible = 0;
+	*next_is_visual_root = 0;
+
+	for (cl = graph->revs->commits; cl; cl = cl->next) {
+		if (get_commit_action(graph->revs, cl->item) != commit_show)
+			continue;
+		*is_next_visible = 1;
+		/*
+		 * We do not need graph->num_new_columns, because we only need
+		 * to know whether the next one might be a visual root, affecting
+		 * the current commit where the cascade would have to be set
+		 * and the first visual root not indented.
+		 *
+		 * It will set next_is_visual_root to true for merge parents that
+		 * graph_is_visual_root() would return false, but if the next is
+		 * a merge parent, the current commit is the child and cannot
+		 * be a visual root and therefore having no effect.
+		 */
+		if (!graph_is_visual_root_candidate(cl->item))
+			return;
+
+		/*
+		 * The next visible commit is a visual root candidate, but
+		 * only set cascade if it's not the last commit to be rendered.
+		 */
+		for (cl = cl->next; cl; cl = cl->next) {
+			if (get_commit_action(graph->revs, cl->item) != commit_show)
+				continue;
+			*next_is_visual_root = 1;
+			return;
+		}
+		return;
+	}
+}
+
 void graph_update(struct git_graph *graph, struct commit *commit)
 {
 	struct commit_list *parent;
+	unsigned int is_next_visible = 0;
+	unsigned int is_next_visual_root = 0;
 
 	/*
 	 * Set the new commit
@@ -774,6 +904,23 @@ void graph_update(struct git_graph *graph, struct commit *commit)
 	 */
 	graph_update_columns(graph);
 
+	graph_peek_next_visible(graph, &is_next_visible, &is_next_visual_root);
+
+	graph->is_visual_root = graph_is_visual_root(graph, is_next_visible);
+
+	if (graph->is_visual_root) {
+		/*
+		 * If next is a visual root we can ommit the indent for the first
+		 * visual root and start cascading.
+		 */
+		if (!graph->visual_root_depth && is_next_visual_root)
+			graph->cascade = 1;
+		graph->visual_root_depth++;
+	} else {
+		graph->visual_root_depth = 0;
+		graph->cascade = 0;
+	}
+
 	graph->expansion_row = 0;
 
 	/*
@@ -791,11 +938,16 @@ void graph_update(struct git_graph *graph, struct commit *commit)
 	 * room for it.  We need to do this only if there is a branch row
 	 * (or more) to the right of this commit.
 	 *
+	 * If it is a visual root, we need to print an extra row to
+	 * connect the indentation.
+	 *
 	 * If there are less than 3 parents, we can immediately print the
 	 * commit line.
 	 */
 	if (graph->state != GRAPH_PADDING)
 		graph->state = GRAPH_SKIP;
+	else if (graph->is_visual_root && graph->num_columns > 0 && !graph->cascade)
+		graph->state = GRAPH_PRE_ROOT;
 	else if (graph_needs_pre_commit_line(graph))
 		graph->state = GRAPH_PRE_COMMIT;
 	else
@@ -1026,6 +1178,12 @@ static void graph_output_commit_line(struct git_graph *graph, struct graph_line 
 
 		if (col_commit == graph->commit) {
 			seen_this = 1;
+			if (graph->is_visual_root) {
+				int depth = graph->visual_root_depth;
+				int padding = graph->cascade ? (depth - 1) * 2 : depth * 2;
+				graph_line_addchars(line, ' ', padding);
+				graph->width += padding;
+			}
 			graph_output_commit_char(graph, line);
 
 			if (graph->num_parents > 2)
@@ -1311,6 +1469,31 @@ static void graph_output_collapsing_line(struct git_graph *graph, struct graph_l
 		graph_update_state(graph, GRAPH_PADDING);
 }
 
+static void graph_output_pre_root_line(struct git_graph *graph, struct graph_line *line)
+{
+	int i;
+
+	/*
+	 * This function adds a row before a visual root, to connect the
+	 * branch to the indented commit. It should only be called on a
+	 * visual root.
+	 */
+	assert(graph->is_visual_root);
+
+	for (i = 0; i < graph->num_columns; i++) {
+		struct column *col = &graph->columns[i];
+		if (col->commit == graph->commit) {
+			graph_line_addch(line, ' ');
+			graph_line_write_column(line, col, '\\');
+		}
+		else
+			graph_line_write_column(line, col, '|');
+		graph_line_addch(line, ' ');
+	}
+
+	graph_update_state(graph, GRAPH_COMMIT);
+}
+
 int graph_next_line(struct git_graph *graph, struct strbuf *sb)
 {
 	int shown_commit_line = 0;
@@ -1335,6 +1518,9 @@ int graph_next_line(struct git_graph *graph, struct strbuf *sb)
 		break;
 	case GRAPH_PRE_COMMIT:
 		graph_output_pre_commit_line(graph, &line);
+		break;
+	case GRAPH_PRE_ROOT:
+		graph_output_pre_root_line(graph, &line);
 		break;
 	case GRAPH_COMMIT:
 		graph_output_commit_line(graph, &line);
