@@ -96,6 +96,7 @@ static int fill_commit_message(struct repository *repo,
 
 enum commit_tree_flags {
 	COMMIT_TREE_EDIT_MESSAGE = (1 << 0),
+	COMMIT_TREE_ABORT_ON_SAME_MESSAGE = (1 << 1),
 };
 
 static int commit_tree_ext(struct repository *repo,
@@ -135,6 +136,13 @@ static int commit_tree_ext(struct repository *repo,
 					  original_body, action, &commit_message);
 		if (ret < 0)
 			goto out;
+
+		if (flags & COMMIT_TREE_ABORT_ON_SAME_MESSAGE &&
+		    !strcmp(original_body, commit_message.buf)) {
+			fprintf(stderr, _("Message unchanged, aborting reword.\n"));
+			ret = 1;
+			goto out;
+		}
 	} else {
 		strbuf_addstr(&commit_message, original_body);
 	}
@@ -693,7 +701,8 @@ static int cmd_history_reword(int argc,
 	struct strbuf reflog_msg = STRBUF_INIT;
 	struct commit *original, *rewritten;
 	struct rev_info revs = { 0 };
-	enum commit_tree_flags flags = COMMIT_TREE_EDIT_MESSAGE;
+	enum commit_tree_flags flags = COMMIT_TREE_EDIT_MESSAGE |
+				       COMMIT_TREE_ABORT_ON_SAME_MESSAGE;
 	int ret;
 
 	argc = parse_options(argc, argv, prefix, options, usage, 0);
@@ -720,6 +729,9 @@ static int cmd_history_reword(int argc,
 					      &rewritten, flags);
 	if (ret < 0) {
 		ret = error(_("failed writing reworded commit"));
+		goto out;
+	} else if (ret == 1) {
+		ret = 0;
 		goto out;
 	}
 
