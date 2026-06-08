@@ -160,7 +160,8 @@ out:
 static int commit_tree_with_edited_message(struct repository *repo,
 					   const char *action,
 					   struct commit *original,
-					   struct commit **out)
+					   struct commit **out,
+					   enum commit_tree_flags flags)
 {
 	struct object_id parent_tree_oid;
 	const struct object_id *tree_oid;
@@ -181,7 +182,7 @@ static int commit_tree_with_edited_message(struct repository *repo,
 	}
 
 	return commit_tree_ext(repo, action, original, original->parents,
-			       &parent_tree_oid, tree_oid, out, COMMIT_TREE_EDIT_MESSAGE);
+			       &parent_tree_oid, tree_oid, out, flags);
 }
 
 enum ref_action {
@@ -692,6 +693,7 @@ static int cmd_history_reword(int argc,
 	struct strbuf reflog_msg = STRBUF_INIT;
 	struct commit *original, *rewritten;
 	struct rev_info revs = { 0 };
+	enum commit_tree_flags flags = COMMIT_TREE_EDIT_MESSAGE;
 	int ret;
 
 	argc = parse_options(argc, argv, prefix, options, usage, 0);
@@ -714,7 +716,8 @@ static int cmd_history_reword(int argc,
 	if (ret)
 		goto out;
 
-	ret = commit_tree_with_edited_message(repo, "reworded", original, &rewritten);
+	ret = commit_tree_with_edited_message(repo, "reworded", original,
+					      &rewritten, flags);
 	if (ret < 0) {
 		ret = error(_("failed writing reworded commit"));
 		goto out;
