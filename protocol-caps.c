@@ -12,7 +12,8 @@
 #include <stdint.h>
 
 struct requested_info {
-	unsigned size : 1;
+	unsigned size:1;
+	unsigned type:1;
 };
 
 /*
@@ -48,6 +49,9 @@ static void send_info(struct repository *r, struct packet_writer *writer,
 	if (info->size)
 		packet_writer_write(writer, "size");
 
+	if (info->type)
+		packet_writer_write(writer, "type");
+
 	for_each_string_list_item (item, oid_str_list) {
 		const char *oid_str = item->string;
 		struct object_id oid;
@@ -77,6 +81,9 @@ static void send_info(struct repository *r, struct packet_writer *writer,
 			strbuf_addf(&send_buffer, " %"PRIuMAX,
 				    (uintmax_t)object_size);
 
+		if (info->type)
+			strbuf_addf(&send_buffer, " %s", type_name(object_type));
+
 write:
 		packet_writer_write(writer, "%s", send_buffer.buf);
 		strbuf_reset(&send_buffer);
@@ -95,6 +102,11 @@ int cap_object_info(struct repository *r, struct packet_reader *request)
 	while (packet_reader_read(request) == PACKET_READ_NORMAL) {
 		if (!strcmp("size", request->line)) {
 			info.size = 1;
+			continue;
+		}
+
+		if (!strcmp("type", request->line)) {
+			info.type = 1;
 			continue;
 		}
 
