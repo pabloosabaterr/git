@@ -558,13 +558,16 @@ object-info
 
 `object-info` is the command to retrieve information about one or more objects.
 Its main purpose is to allow a client to make decisions based on this
-information without having to fully fetch objects. Object size is the only
-information that is currently supported.
+information without having to fully fetch objects. Object size and type are the
+only information that is currently supported.
 
 An `object-info` request takes the following arguments:
 
 	size
 	Requests size information to be returned for each listed object id.
+
+	type
+	Requests type information to be returned for each listed object id
 
 	oid <oid>
 	Indicates to the server an object which the client wants to obtain
@@ -580,14 +583,18 @@ and associated requested information, each separated by a single space.
 
 	attrs = attr | attrs SP attrs
 
+	obj-type = "blob" | "tree" | "commit" | "tag"
+
 	obj-size = 1*DIGIT
 
-	attr = "size"
+	obj-val = obj-size | obj-type
 
-	obj-info = obj-id SP [obj-size]
+	attr = "size" | "type"
 
-	If the server does not recognize the object id, the response will be
-	`obj-id SP` regardless of the number of attributes requested.
+	obj-info = obj-id SP [obj-val *(SP obj-val)]
+
+If the server does not recognize the object id, the response will be
+`obj-id SP` regardless of the number of attributes requested.
 
 bundle-uri
 ~~~~~~~~~~
