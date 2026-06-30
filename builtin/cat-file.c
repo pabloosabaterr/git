@@ -668,8 +668,7 @@ out:
 	object_context_release(&ctx);
 }
 
-static int get_remote_info(struct batch_options *opt,
-			   int argc,
+static int get_remote_info(int argc,
 			   const char **argv,
 			   struct object_info **remote_object_info,
 			   struct oid_array *object_info_oids,
@@ -679,14 +678,6 @@ static int get_remote_info(struct batch_options *opt,
 	struct remote *remote = NULL;
 	struct object_id oid;
 	struct transport *gtransport;
-
-	/*
-	 * TODO: Change the format to "%(objectname) %(objectsize)" when
-	 * remote-object-info command is used. Once we start supporting objecttype
-	 * the default format should change to DEFAULT_FORMAT.
-	 */
-	if (!opt->format)
-		opt->format = "%(objectname) %(objectsize)";
 
 	remote = remote_get(argv[0]);
 	if (!remote)
@@ -858,7 +849,7 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 	if (data->info.typep)
 		string_list_append(&object_info_options, "type");
 
-	if (get_remote_info(opt, count, argv, &remote_object_info,
+	if (get_remote_info(count, argv, &remote_object_info,
 			    &object_info_oids, &object_info_options))
 		goto cleanup;
 
