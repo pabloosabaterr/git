@@ -475,6 +475,37 @@ int transport_fetch_object_info(struct transport *transport)
 	return transport->vtable->fetch_object_info(transport);
 }
 
+int fetch_remote_object_info(struct remote *remote,
+			     struct oid_array *oids,
+			     struct string_list *options,
+			     struct object_info **info)
+{
+	int retval = 0;
+	struct transport *gtransport;
+
+	if (!oids->nr)
+		BUG("fetch_remote_object_info requires at least one OID");
+
+	gtransport = transport_get(remote, NULL);
+	if (!gtransport->smart_options) {
+		retval = -1;
+		goto cleanup;
+	}
+
+	CALLOC_ARRAY(*info, oids->nr);
+	gtransport->smart_options->object_info_oids = oids;
+
+	if (options->nr > 0) {
+		gtransport->smart_options->object_info_options = options;
+		gtransport->smart_options->object_info_data = *info;
+		retval = transport_fetch_object_info(gtransport);
+	}
+
+cleanup:
+	transport_disconnect(gtransport);
+	return retval;
+}
+
 static int fetch_refs_via_pack(struct transport *transport,
 			       int nr_heads, struct ref **to_fetch)
 {

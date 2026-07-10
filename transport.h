@@ -320,6 +320,19 @@ int transport_fetch_refs(struct transport *transport, struct ref *refs);
 int transport_fetch_object_info(struct transport *transport);
 
 /*
+ * Get object-info for a list of OIDs from remote, without downloading the
+ * actual objects.
+ *
+ * The caller must free each entry of *info and the array itself.
+ *
+ * Returns -1 on error.
+ */
+int fetch_remote_object_info(struct remote *remote,
+			     struct oid_array *oids,
+			     struct string_list *options,
+			     struct object_info **info);
+
+/*
  * If this flag is set, unlocking will avoid to call non-async-signal-safe
  * functions. This will necessarily leave behind some data structures which
  * cannot be cleaned up.

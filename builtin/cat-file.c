@@ -678,10 +678,8 @@ static int get_remote_info(struct batch_options *opt,
 			   struct oid_array *object_info_oids,
 			   struct string_list *object_info_options)
 {
-	int retval = 0;
 	struct remote *remote = NULL;
 	struct object_id oid;
-	struct transport *gtransport;
 
 	/*
 	 * TODO: Change the format to "%(objectname) %(objectsize)" when
@@ -718,24 +716,10 @@ static int get_remote_info(struct batch_options *opt,
 	if (!object_info_oids->nr)
 		die(_("remote-object-info requires objects"));
 
-	gtransport = transport_get(remote, NULL);
-
-	if (!gtransport->smart_options) {
-		retval = -1;
-		goto cleanup;
-	}
-
-	CALLOC_ARRAY(*remote_object_info, object_info_oids->nr);
-	gtransport->smart_options->object_info_oids = object_info_oids;
-
-	if (object_info_options->nr > 0) {
-		gtransport->smart_options->object_info_options = object_info_options;
-		gtransport->smart_options->object_info_data = *remote_object_info;
-		retval = transport_fetch_object_info(gtransport);
-	}
-cleanup:
-	transport_disconnect(gtransport);
-	return retval;
+	return fetch_remote_object_info(remote,
+					object_info_oids,
+					object_info_options,
+					remote_object_info);
 }
 
 struct object_cb_data {
