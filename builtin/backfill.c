@@ -36,6 +36,8 @@ struct backfill_context {
 	size_t min_batch_size;
 	int sparse;
 	int include_edges;
+	int dry_run;
+	size_t missing_blobs_nr;
 	struct rev_info revs;
 };
 
@@ -58,6 +60,12 @@ static void download_batch(struct backfill_context *ctx)
 	odb_reprepare(ctx->repo->objects);
 }
 
+static void get_batch_info(struct backfill_context *ctx)
+{
+	ctx->missing_blobs_nr += ctx->current_batch.nr;
+	oid_array_clear(&ctx->current_batch);
+}
+
 static int fill_missing_blobs(const char *path UNUSED,
 			      struct oid_array *list,
 			      enum object_type type,
@@ -73,8 +81,12 @@ static int fill_missing_blobs(const char *path UNUSED,
 			oid_array_append(&ctx->current_batch, &list->oid[i]);
 	}
 
-	if (ctx->current_batch.nr >= ctx->min_batch_size)
-		download_batch(ctx);
+	if (ctx->current_batch.nr >= ctx->min_batch_size) {
+		if (ctx->dry_run)
+			get_batch_info(ctx);
+		else
+			download_batch(ctx);
+	}
 
 	return 0;
 }
@@ -131,10 +143,24 @@ static int do_backfill(struct backfill_context *ctx)
 
 	ret = walk_objects_by_path(&info);
 
-	/* Download the objects that did not fill a batch. */
-	if (!ret)
-		download_batch(ctx);
+	if (ret)
+		goto end;
 
+	/* Download the objects that did not fill a batch. */
+	if (!ctx->dry_run) {
+		download_batch(ctx);
+		goto end;
+	}
+
+	get_batch_info(ctx);
+
+	fprintf(stderr,
+		Q_("After backfill %"PRIuMAX" blob would be fetched.\n",
+		   "After backfill, %"PRIuMAX" blobs would be fetched\n",
+		   (unsigned long)ctx->missing_blobs_nr),
+		(uintmax_t)ctx->missing_blobs_nr);
+
+end:
 	path_walk_info_clear(&info);
 	return ret;
 }
@@ -149,6 +175,8 @@ int cmd_backfill(int argc, const char **argv, const char *prefix, struct reposit
 		.sparse = -1,
 		.revs = REV_INFO_INIT,
 		.include_edges = 1,
+		.dry_run = 0,
+		.missing_blobs_nr = 0,
 	};
 	struct option options[] = {
 		OPT_UNSIGNED(0, "min-batch-size", &ctx.min_batch_size,
@@ -157,6 +185,8 @@ int cmd_backfill(int argc, const char **argv, const char *prefix, struct reposit
 			 N_("Restrict the missing objects to the current sparse-checkout")),
 		OPT_BOOL(0, "include-edges", &ctx.include_edges,
 			 N_("Include blobs from boundary commits in the backfill")),
+		OPT__DRY_RUN(&ctx.dry_run,
+			     N_("Show how many blobs and the total size without fetching them")),
 		OPT_END(),
 	};
 	struct repo_config_values *cfg = repo_config_values(the_repository);
