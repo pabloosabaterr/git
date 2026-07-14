@@ -45,16 +45,19 @@ static size_t parse_object_size(const char *s, size_t *res)
 	return 0;
 }
 
-int fetch_object_info(const enum protocol_version version, struct object_info_args *args,
-		      struct packet_reader *reader, struct object_info *object_info_data,
-		      const int stateless_rpc, const int fd_out)
+enum fetch_object_info_result fetch_object_info(const enum protocol_version version,
+						struct object_info_args *args,
+						struct packet_reader *reader,
+						struct object_info *object_info_data,
+						const int stateless_rpc,
+						const int fd_out)
 {
 	int size_index = -1;
 
 	switch (version) {
 	case protocol_v2:
 		if (!server_supports_v2("object-info"))
-			die(_("object-info capability is not enabled on the server"));
+			return FETCH_OBJECT_INFO_NOT_ENABLED;
 		/*
 		 * When removing an element from the list it gets swapped by the
 		 * last element, iterate backwards to prevent elements skipping
@@ -73,13 +76,13 @@ int fetch_object_info(const enum protocol_version version, struct object_info_ar
 		 * request to the server.
 		 */
 		if (!args->object_info_options->nr)
-			return 0;
+			return FETCH_OBJECT_INFO_OK;
 
 		send_object_info_request(fd_out, args);
 		break;
 	case protocol_v1:
 	case protocol_v0:
-		die(_("unsupported protocol version. expected v2"));
+		return FETCH_OBJECT_INFO_UNSUPPORTED_PROTOCOL;
 	case protocol_unknown_version:
 		BUG("unknown protocol version");
 	}
@@ -88,11 +91,11 @@ int fetch_object_info(const enum protocol_version version, struct object_info_ar
 		if (packet_reader_read(reader) != PACKET_READ_NORMAL) {
 			check_stateless_delimiter(stateless_rpc, reader,
 						  "stateless delimiter expected");
-			return -1;
+			return FETCH_OBJECT_INFO_ERROR;
 		}
 
 		if (!string_list_has_string(args->object_info_options, reader->line))
-			return -1;
+			return FETCH_OBJECT_INFO_ERROR;
 
 		if (!strcmp(reader->line, "size")) {
 			size_index = i;
@@ -125,5 +128,5 @@ int fetch_object_info(const enum protocol_version version, struct object_info_ar
 	}
 	check_stateless_delimiter(stateless_rpc, reader, "stateless delimiter expected");
 
-	return 0;
+	return FETCH_OBJECT_INFO_OK;
 }

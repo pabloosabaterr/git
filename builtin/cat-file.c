@@ -32,6 +32,7 @@
 #include "alias.h"
 #include "remote.h"
 #include "transport.h"
+#include "fetch-object-info.h"
 
 /*
  * Maximum length for a remote URL. While no universal standard exists,
@@ -680,6 +681,7 @@ static int get_remote_info(struct batch_options *opt,
 {
 	struct remote *remote = NULL;
 	struct object_id oid;
+	enum fetch_object_info_result req_res;
 
 	/*
 	 * TODO: Change the format to "%(objectname) %(objectsize)" when
@@ -716,10 +718,23 @@ static int get_remote_info(struct batch_options *opt,
 	if (!object_info_oids->nr)
 		die(_("remote-object-info requires objects"));
 
-	return fetch_remote_object_info(remote,
-					object_info_oids,
-					object_info_options,
-					remote_object_info);
+	req_res = fetch_remote_object_info(remote,
+					   object_info_oids,
+					   object_info_options,
+					   remote_object_info);
+
+	switch (req_res) {
+	case FETCH_OBJECT_INFO_OK:
+		break;
+	case FETCH_OBJECT_INFO_NOT_ENABLED:
+		die(_("object-info capability is not enabled on the server"));
+	case FETCH_OBJECT_INFO_UNSUPPORTED_PROTOCOL:
+		die(_("object-info requires protocol v2"));
+	default:
+		die(_("failed to fetch object-info from the remote"));
+	}
+
+	return 0;
 }
 
 struct object_cb_data {
