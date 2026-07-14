@@ -24,6 +24,9 @@
 #include "progress.h"
 #include "packfile.h"
 #include "path-walk.h"
+#include "remote.h"
+#include "strbuf.h"
+#include "transport.h"
 
 static const char * const builtin_backfill_usage[] = {
 	N_("git backfill [--min-batch-size=<n>] [--[no-]sparse] [--[no-]include-edges] [<revision-range>]"),
@@ -38,6 +41,8 @@ struct backfill_context {
 	int include_edges;
 	int dry_run;
 	size_t missing_blobs_nr;
+	size_t missing_blobs_size;
+	unsigned int object_info_supported:1;
 	struct rev_info revs;
 };
 
@@ -60,9 +65,46 @@ static void download_batch(struct backfill_context *ctx)
 	odb_reprepare(ctx->repo->objects);
 }
 
+static void fetch_batch_size(struct backfill_context *ctx)
+{
+	struct string_list options = STRING_LIST_INIT_NODUP;
+	struct object_info *info = NULL;
+	struct remote *remote = NULL;
+	struct promisor_remote *p = repo_promisor_remote_find(ctx->repo, NULL);
+	enum fetch_object_info_result req_res;
+
+	ctx->object_info_supported = 0;
+
+	if (!p || !(remote = remote_get(p->name)))
+		return;
+
+	string_list_append(&options, "size");
+
+	req_res = fetch_remote_object_info(remote, &ctx->current_batch, &options, &info);
+	if (req_res != FETCH_OBJECT_INFO_OK)
+		goto cleanup;
+
+	ctx->object_info_supported = 1;
+
+	for (size_t i = 0; i < ctx->current_batch.nr; i++)
+		if (info[i].sizep)
+			ctx->missing_blobs_size += *info[i].sizep;
+
+cleanup:
+	if (info) {
+		for (size_t i = 0; i < ctx->current_batch.nr; i++)
+			free_object_info_contents(&info[i]);
+		free(info);
+	}
+	string_list_clear(&options, 0);
+}
+
 static void get_batch_info(struct backfill_context *ctx)
 {
 	ctx->missing_blobs_nr += ctx->current_batch.nr;
+	if (ctx->object_info_supported && ctx->current_batch.nr)
+		fetch_batch_size(ctx);
+
 	oid_array_clear(&ctx->current_batch);
 }
 
@@ -154,11 +196,26 @@ static int do_backfill(struct backfill_context *ctx)
 
 	get_batch_info(ctx);
 
-	fprintf(stderr,
-		Q_("After backfill %"PRIuMAX" blob would be fetched.\n",
-		   "After backfill, %"PRIuMAX" blobs would be fetched\n",
-		   (unsigned long)ctx->missing_blobs_nr),
-		(uintmax_t)ctx->missing_blobs_nr);
+	if (ctx->object_info_supported) {
+		struct strbuf size = STRBUF_INIT;
+		strbuf_humanise_bytes(&size, ctx->missing_blobs_size);
+
+		fprintf(stderr,
+			Q_("After backfill, %"PRIuMAX" blob would be fetched "
+			   "(total size of: %s).\n",
+			   "After backfill, %"PRIuMAX" blobs would be fetched "
+			   "(total size of: %s).\n",
+			   (unsigned long)ctx->missing_blobs_nr),
+			(uintmax_t)ctx->missing_blobs_nr, size.buf);
+
+		strbuf_release(&size);
+	} else {
+		fprintf(stderr,
+			Q_("After backfill, %"PRIuMAX" blob would be fetched.\n",
+			   "After backfill, %"PRIuMAX" blobs would be fetched.\n",
+			   (unsigned long)ctx->missing_blobs_nr),
+			(uintmax_t)ctx->missing_blobs_nr);
+	}
 
 end:
 	path_walk_info_clear(&info);
@@ -177,6 +234,8 @@ int cmd_backfill(int argc, const char **argv, const char *prefix, struct reposit
 		.include_edges = 1,
 		.dry_run = 0,
 		.missing_blobs_nr = 0,
+		.missing_blobs_size = 0,
+		.object_info_supported = 1,
 	};
 	struct option options[] = {
 		OPT_UNSIGNED(0, "min-batch-size", &ctx.min_batch_size,
