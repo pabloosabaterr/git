@@ -433,9 +433,9 @@ static int get_bundle_uri(struct transport *transport)
 				     transport->bundles, stateless_rpc);
 }
 
-static int fetch_object_info_via_pack(struct transport *transport)
+static enum fetch_object_info_result fetch_object_info_via_pack(struct transport *transport)
 {
-	int ret = 0;
+	int ret = FETCH_OBJECT_INFO_OK;
 	struct git_transport_data *data = transport->data;
 	struct packet_reader reader;
 	struct object_info_args args = { 0 };
@@ -462,17 +462,48 @@ static int fetch_object_info_via_pack(struct transport *transport)
 	if (data->fd[1] >= 0)
 		close(data->fd[1]);
 	if (finish_connect(data->conn))
-		ret = -1;
+		ret = FETCH_OBJECT_INFO_ERROR;
 	data->conn = NULL;
 
 	return ret;
 }
 
-int transport_fetch_object_info(struct transport *transport)
+enum fetch_object_info_result transport_fetch_object_info(struct transport *transport)
 {
 	if (!transport->vtable->fetch_object_info)
 		die(_("remote does not support object-info"));
 	return transport->vtable->fetch_object_info(transport);
+}
+
+enum fetch_object_info_result fetch_remote_object_info(struct remote *remote,
+						       struct oid_array *oids,
+						       struct string_list *options,
+						       struct object_info **info)
+{
+	int retval = FETCH_OBJECT_INFO_OK;
+	struct transport *gtransport;
+
+	if (!oids->nr)
+		BUG("fetch_remote_object_info requires at least one OID");
+
+	gtransport = transport_get(remote, NULL);
+	if (!gtransport->smart_options) {
+		retval = FETCH_OBJECT_INFO_ERROR;
+		goto cleanup;
+	}
+
+	CALLOC_ARRAY(*info, oids->nr);
+	gtransport->smart_options->object_info_oids = oids;
+
+	if (options->nr > 0) {
+		gtransport->smart_options->object_info_options = options;
+		gtransport->smart_options->object_info_data = *info;
+		retval = transport_fetch_object_info(gtransport);
+	}
+
+cleanup:
+	transport_disconnect(gtransport);
+	return retval;
 }
 
 static int fetch_refs_via_pack(struct transport *transport,

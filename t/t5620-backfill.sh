@@ -141,6 +141,49 @@ test_expect_success 'do partial clone 2, backfill min batch size' '
 	test_line_count = 0 revs2
 '
 
+test_expect_success '--dry-run does not download the objects' '
+	test_config -C srv.bare transfer.advertiseobjectinfo true &&
+	test_when_finished rm -rf backfill-dry-run &&
+	git clone --no-checkout --filter=blob:none	\
+		--single-branch --branch=main 		\
+		"file://$(pwd)/srv.bare" backfill-dry-run &&
+
+	GIT_TRACE2_EVENT="$(pwd)/dry-trace" git \
+		-C backfill-dry-run backfill --dry-run 2>out &&
+
+	git -C backfill-dry-run rev-list --quiet --objects --missing=print HEAD >missing &&
+	test_line_count = 48 missing &&
+	! grep "fetch_count" dry-trace
+'
+
+test_expect_success '--dry-run outputs number and size of missing blobs' '
+	test_config -C srv.bare transfer.advertiseobjectinfo true &&
+	test_when_finished rm -rf backfill-dry-run &&
+	git clone --no-checkout --filter=blob:none	\
+		--single-branch --branch=main		\
+		"file://$(pwd)/srv.bare" backfill-dry-run &&
+
+	git -C backfill-dry-run backfill --dry-run 2>out &&
+
+	test_grep "48 blobs would be fetched" out &&
+	test_grep "total size of:" out &&
+
+	git -C backfill-dry-run rev-list --quiet --objects --missing=print HEAD >missing &&
+	test_line_count = 48 missing
+'
+
+test_expect_success '--dry-run prints only missing number when object-info fails or is not supported' '
+	test_when_finished rm -rf backfill-dry-run &&
+	git clone --no-checkout --filter=blob:none	\
+		--single-branch --branch=main		\
+		"file://$(pwd)/srv.bare" backfill-dry-run &&
+
+	git -C backfill-dry-run backfill --dry-run 2>out &&
+
+	test_grep "48 blobs would be fetched" out &&
+	! test_grep "total size of:" out
+'
+
 test_expect_success 'backfill --sparse without sparse-checkout fails' '
 	git init not-sparse &&
 	test_must_fail git -C not-sparse backfill --sparse 2>err &&

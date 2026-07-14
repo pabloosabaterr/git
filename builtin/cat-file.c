@@ -32,6 +32,7 @@
 #include "alias.h"
 #include "remote.h"
 #include "transport.h"
+#include "fetch-object-info.h"
 
 /*
  * Maximum length for a remote URL. While no universal standard exists,
@@ -678,10 +679,9 @@ static int get_remote_info(struct batch_options *opt,
 			   struct oid_array *object_info_oids,
 			   struct string_list *object_info_options)
 {
-	int retval = 0;
 	struct remote *remote = NULL;
 	struct object_id oid;
-	struct transport *gtransport;
+	enum fetch_object_info_result req_res;
 
 	/*
 	 * TODO: Change the format to "%(objectname) %(objectsize)" when
@@ -718,24 +718,23 @@ static int get_remote_info(struct batch_options *opt,
 	if (!object_info_oids->nr)
 		die(_("remote-object-info requires objects"));
 
-	gtransport = transport_get(remote, NULL);
+	req_res = fetch_remote_object_info(remote,
+					   object_info_oids,
+					   object_info_options,
+					   remote_object_info);
 
-	if (!gtransport->smart_options) {
-		retval = -1;
-		goto cleanup;
+	switch (req_res) {
+	case FETCH_OBJECT_INFO_OK:
+		break;
+	case FETCH_OBJECT_INFO_NOT_ENABLED:
+		die(_("object-info capability is not enabled on the server"));
+	case FETCH_OBJECT_INFO_UNSUPPORTED_PROTOCOL:
+		die(_("object-info requires protocol v2"));
+	default:
+		die(_("failed to fetch object-info from the remote"));
 	}
 
-	CALLOC_ARRAY(*remote_object_info, object_info_oids->nr);
-	gtransport->smart_options->object_info_oids = object_info_oids;
-
-	if (object_info_options->nr > 0) {
-		gtransport->smart_options->object_info_options = object_info_options;
-		gtransport->smart_options->object_info_data = *remote_object_info;
-		retval = transport_fetch_object_info(gtransport);
-	}
-cleanup:
-	transport_disconnect(gtransport);
-	return retval;
+	return 0;
 }
 
 struct object_cb_data {

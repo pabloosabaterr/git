@@ -7,6 +7,7 @@
 #include "string-list.h"
 #include "connect.h"
 #include "odb.h"
+#include "fetch-object-info.h"
 
 struct git_transport_options {
 	unsigned thin : 1;
@@ -317,7 +318,20 @@ int transport_fetch_refs(struct transport *transport, struct ref *refs);
 /*
  * Fetch the object info from remote
  */
-int transport_fetch_object_info(struct transport *transport);
+enum fetch_object_info_result transport_fetch_object_info(struct transport *transport);
+
+/*
+ * Get object-info for a list of OIDs from remote, without downloading the
+ * actual objects.
+ *
+ * The caller must free each entry of *info and the array itself.
+ *
+ * Returns -1 on error.
+ */
+enum fetch_object_info_result fetch_remote_object_info(struct remote *remote,
+						       struct oid_array *oids,
+						       struct string_list *options,
+						       struct object_info **info);
 
 /*
  * If this flag is set, unlocking will avoid to call non-async-signal-safe

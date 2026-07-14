@@ -20,6 +20,7 @@
 #include "transport-internal.h"
 #include "protocol.h"
 #include "packfile.h"
+#include "fetch-object-info.h"
 
 static int debug;
 
@@ -789,7 +790,7 @@ static int fetch_object_info_helper(struct transport *transport)
 	if (process_connect(transport, 0))
 		return transport->vtable->fetch_object_info(transport);
 
-	die(_("object-info requires protocol v2"));
+	return FETCH_OBJECT_INFO_UNSUPPORTED_PROTOCOL;
 }
 
 struct push_update_ref_state {
