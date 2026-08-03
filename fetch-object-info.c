@@ -49,6 +49,7 @@ int fetch_object_info(const enum protocol_version version, struct object_info_ar
 		      struct packet_reader *reader, struct object_info *object_info_data,
 		      const int stateless_rpc, const int fd_out)
 {
+	size_t i;
 	int size_index = -1;
 
 	switch (version) {
@@ -82,7 +83,7 @@ int fetch_object_info(const enum protocol_version version, struct object_info_ar
 		BUG("unknown protocol version");
 	}
 
-	for (size_t i = 0; i < args->object_info_options->nr; i++) {
+	for (i = 0; i < args->object_info_options->nr; i++) {
 		if (packet_reader_read(reader) != PACKET_READ_NORMAL) {
 			check_stateless_delimiter(stateless_rpc, reader,
 						  "stateless delimiter expected");
@@ -106,7 +107,7 @@ int fetch_object_info(const enum protocol_version version, struct object_info_ar
 		}
 	}
 
-	for (size_t i = 0;
+	for (i = 0;
 	     packet_reader_read(reader) == PACKET_READ_NORMAL &&
 	     i < args->oids->nr;
 	     i++) {
@@ -150,6 +151,11 @@ int fetch_object_info(const enum protocol_version version, struct object_info_ar
 
 		string_list_clear(&object_info_values, 0);
 	}
+
+	if (i != args->oids->nr)
+		die(_("object-info: expected %" PRIuMAX " objects, got %" PRIuMAX),
+		    (uintmax_t)args->oids->nr, (uintmax_t)i);
+
 	check_stateless_delimiter(stateless_rpc, reader, "stateless delimiter expected");
 
 	return 0;
