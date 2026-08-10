@@ -443,6 +443,28 @@ test_expect_success '--reedit-message opens editor for the commit message' '
 	)
 '
 
+test_expect_success 'fixup --reedit-message does not abort with the same commit message' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit initial &&
+		echo content > file.txt &&
+		git add file.txt &&
+		git commit -m "add file" &&
+
+		echo fix >>file.txt &&
+		git add file.txt &&
+		GIT_EDITOR=true git history fixup --reedit-message HEAD &&
+		expect_changes --branches <<-\EOF
+		add file
+		2	0	file.txt
+		initial
+		1	0	initial.t
+		EOF
+	)
+'
+
 test_expect_success 'retains unstaged working tree changes after fixup' '
 	test_when_finished "rm -rf repo" &&
 	git init repo &&

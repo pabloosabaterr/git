@@ -396,4 +396,20 @@ test_expect_success 'retains changes in the worktree and index' '
 	)
 '
 
+test_expect_success 'aborts if the commit message is the same' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit first &&
+		test_commit second &&
+
+		git rev-parse HEAD >oid-before &&
+		GIT_EDITOR=true git history reword HEAD 2>err &&
+		git rev-parse HEAD >oid-after &&
+		test_cmp oid-before oid-after &&
+		test_grep "Message unchanged" err
+	)
+'
+
 test_done
