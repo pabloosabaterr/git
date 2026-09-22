@@ -72,7 +72,11 @@ OPTIONS
 
 `--dry-run`::
 	Do not download any objects. Instead, print the number of
-	missing blobs that would be downloaded.
+	missing blobs that would be downloaded and, if the promisor
+	remote supports the `object-info` capability, their total
+	size. This is the sum of the uncompressed sizes of the blobs,
+	so the space used on disk after a real backfill is usually
+	smaller.
 
 `<revision-range>`::
 	Backfill only blobs reachable from commits in the specified
