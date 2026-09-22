@@ -9,7 +9,7 @@ git-backfill - Download missing objects in a partial clone
 SYNOPSIS
 --------
 [synopsis]
-git backfill [--min-batch-size=<n>] [--[no-]sparse] [--[no-]include-edges] [<revision-range>]
+git backfill [--min-batch-size=<n>] [--[no-]sparse] [--[no-]include-edges] [--dry-run] [<revision-range>]
 
 DESCRIPTION
 -----------
@@ -69,6 +69,10 @@ OPTIONS
 	preparation for commands like `git log -p A..B` or `git replay
 	--onto TARGET A..B`, where A..B normally excludes A but you need
 	the blobs from A as well.  `--include-edges` is the default.
+
+`--dry-run`::
+	Do not download any objects, print the number of blobs to be
+	fetched.
 
 `<revision-range>`::
 	Backfill only blobs reachable from commits in the specified

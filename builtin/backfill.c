@@ -25,8 +25,8 @@
 #include "packfile.h"
 #include "path-walk.h"
 
-static const char * const builtin_backfill_usage[] = {
-	N_("git backfill [--min-batch-size=<n>] [--[no-]sparse] [--[no-]include-edges] [<revision-range>]"),
+static const char *const builtin_backfill_usage[] = {
+	N_("git backfill [--min-batch-size=<n>] [--[no-]sparse] [--[no-]include-edges] [--dry-run] [<revision-range>]"),
 	NULL
 };
 
@@ -36,6 +36,8 @@ struct backfill_context {
 	size_t min_batch_size;
 	int sparse;
 	int include_edges;
+	int dry_run;
+	size_t total_batch_nr;
 	struct rev_info revs;
 };
 
@@ -58,6 +60,15 @@ static void download_batch(struct backfill_context *ctx)
 	odb_reprepare(ctx->repo->objects);
 }
 
+static void dry_run_batch(struct backfill_context *ctx)
+{
+	if (!ctx->current_batch.nr)
+		return;
+
+	ctx->total_batch_nr += ctx->current_batch.nr;
+	oid_array_clear(&ctx->current_batch);
+}
+
 static int fill_missing_blobs(const char *path UNUSED,
 			      struct oid_array *list,
 			      enum object_type type,
@@ -73,8 +84,12 @@ static int fill_missing_blobs(const char *path UNUSED,
 			oid_array_append(&ctx->current_batch, &list->oid[i]);
 	}
 
-	if (ctx->current_batch.nr >= ctx->min_batch_size)
-		download_batch(ctx);
+	if (ctx->current_batch.nr >= ctx->min_batch_size) {
+		if (ctx->dry_run)
+			dry_run_batch(ctx);
+		else
+			download_batch(ctx);
+	}
 
 	return 0;
 }
@@ -131,10 +146,24 @@ static int do_backfill(struct backfill_context *ctx)
 
 	ret = walk_objects_by_path(&info);
 
-	/* Download the objects that did not fill a batch. */
-	if (!ret)
-		download_batch(ctx);
+	if (ret)
+		goto end;
 
+	/* Download the objects that did not fill a batch. */
+	if (!ctx->dry_run) {
+		download_batch(ctx);
+		goto end;
+	}
+
+	dry_run_batch(ctx);
+
+	fprintf(stderr,
+		Q_("After backfill, %" PRIuMAX " blob would be fetched.\n",
+		   "After backfill, %" PRIuMAX " blobs would be fetched.\n",
+		   (unsigned long)ctx->total_batch_nr),
+		(uintmax_t)ctx->total_batch_nr);
+
+end:
 	path_walk_info_clear(&info);
 	return ret;
 }
@@ -157,6 +186,7 @@ int cmd_backfill(int argc, const char **argv, const char *prefix, struct reposit
 			 N_("Restrict the missing objects to the current sparse-checkout")),
 		OPT_BOOL(0, "include-edges", &ctx.include_edges,
 			 N_("Include blobs from boundary commits in the backfill")),
+		OPT__DRY_RUN(&ctx.dry_run, N_("Preview the number of blobs to be fetched")),
 		OPT_END(),
 	};
 	struct repo_config_values *cfg = repo_config_values(the_repository);
