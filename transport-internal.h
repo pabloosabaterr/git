@@ -48,8 +48,8 @@ struct transport_vtable {
 	int (*fetch_refs)(struct transport *transport, int refs_nr, struct ref **refs);
 
 	/*
-	 * Fetch object info (only size currently) from remote without
-	 * downloading the objects.
+	 * Fetch object info (size, type, or none of them to only check
+	 * for existence) from the remote without downloading the objects.
 	 *
 	 * Uses object-info capability of v2 protocol.
 	 */
