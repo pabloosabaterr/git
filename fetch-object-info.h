@@ -16,6 +16,12 @@ struct fetch_object_info_results {
 
 #define FETCH_OBJECT_INFO_RESULTS_INIT { 0 }
 
+enum object_info_fetch_result {
+	OBJECT_INFO_OK = 0,
+	OBJECT_INFO_ERR = -1,
+	OBJECT_INFO_NOT_ENABLED = -2,
+};
+
 struct oid_array;
 /*
  * Sends git-cat-file object-info command into the request buf and reads the
