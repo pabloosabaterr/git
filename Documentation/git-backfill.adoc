@@ -72,7 +72,8 @@ OPTIONS
 
 `--dry-run`::
 	Do not download any objects, print the number of blobs to be
-	fetched.
+	fetched and if the server has the object-info capability enabled
+	prints also the total size of those blobs.
 
 `<revision-range>`::
 	Backfill only blobs reachable from commits in the specified
