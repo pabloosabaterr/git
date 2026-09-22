@@ -32,14 +32,18 @@ struct oid_array;
  * the server both advertised and answered with. An array left NULL means the
  * attribute is not available.
  * Release them with free_fetch_object_info_results().
+ *
+ * Returns OBJECT_INFO_NOT_ENABLED if the server does not advertise the
+ * object-info capability, OBJECT_INFO_OK otherwise.
+ * die()'s on any other error.
  */
-void fetch_object_info(enum protocol_version version,
-		       const struct string_list *server_options,
-		       const struct oid_array *oids,
-		       struct packet_reader *reader,
-		       struct fetch_object_info_results *results,
-		       int stateless_rpc,
-		       int fd_out);
+enum object_info_fetch_result fetch_object_info(enum protocol_version version,
+						const struct string_list *server_options,
+						const struct oid_array *oids,
+						struct packet_reader *reader,
+						struct fetch_object_info_results *results,
+						int stateless_rpc,
+						int fd_out);
 
 void free_fetch_object_info_results(struct fetch_object_info_results *results);
 
