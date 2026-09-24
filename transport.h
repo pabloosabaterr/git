@@ -1,6 +1,7 @@
 #ifndef TRANSPORT_H
 #define TRANSPORT_H
 
+#include "fetch-object-info.h"
 #include "run-command.h"
 #include "remote.h"
 #include "list-objects-filter-options.h"
@@ -314,9 +315,9 @@ int transport_fetch_refs(struct transport *transport, struct ref *refs);
 /*
  * Fetch the object info from remote
  */
-int transport_fetch_object_info(struct transport *transport,
-				const struct oid_array *oids,
-				struct fetch_object_info_results *results);
+enum object_info_fetch_result transport_fetch_object_info(struct transport *transport,
+							  const struct oid_array *oids,
+							  struct fetch_object_info_results *results);
 
 /*
  * If this flag is set, unlocking will avoid to call non-async-signal-safe

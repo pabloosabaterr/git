@@ -726,6 +726,10 @@ static int get_remote_info(int argc,
 
 	retval = transport_fetch_object_info(gtransport, object_info_oids,
 					     results);
+
+	if (retval == OBJECT_INFO_NOT_ENABLED)
+		die(_("object-info capability is not enabled on the server"));
+
 cleanup:
 	transport_disconnect(gtransport);
 	return retval;

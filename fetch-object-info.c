@@ -52,13 +52,13 @@ static int parse_object_size(const char *s, size_t *res)
 	return 0;
 }
 
-void fetch_object_info(const enum protocol_version version,
-		       const struct string_list *server_options,
-		       const struct oid_array *oids,
-		       struct packet_reader *reader,
-		       struct fetch_object_info_results *results,
-		       const int stateless_rpc,
-		       const int fd_out)
+enum object_info_fetch_result fetch_object_info(const enum protocol_version version,
+						const struct string_list *server_options,
+						const struct oid_array *oids,
+						struct packet_reader *reader,
+						struct fetch_object_info_results *results,
+						const int stateless_rpc,
+						const int fd_out)
 {
 	unsigned ask_size = 0;
 	unsigned ask_type = 0;
@@ -72,7 +72,7 @@ void fetch_object_info(const enum protocol_version version,
 	switch (version) {
 	case protocol_v2:
 		if (!server_supports_v2("object-info"))
-			die(_("object-info capability is not enabled on the server"));
+			return OBJECT_INFO_NOT_ENABLED;
 
 		if (results->wants_size &&
 		    server_supports_feature("object-info", "size", 0))
@@ -188,6 +188,7 @@ void fetch_object_info(const enum protocol_version version,
 		    (uintmax_t)oids->nr);
 
 	check_stateless_delimiter(stateless_rpc, reader, "stateless delimiter expected");
+	return OBJECT_INFO_OK;
 }
 
 void free_fetch_object_info_results(struct fetch_object_info_results *results)

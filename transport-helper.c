@@ -786,9 +786,9 @@ static int fetch_refs(struct transport *transport,
 	return -1;
 }
 
-static int fetch_object_info_helper(struct transport *transport,
-				    const struct oid_array *oids,
-				    struct fetch_object_info_results *results)
+static enum object_info_fetch_result fetch_object_info_helper(struct transport *transport,
+							      const struct oid_array *oids,
+							      struct fetch_object_info_results *results)
 {
 	get_helper(transport);
 	if (process_connect(transport, 0))
