@@ -59,6 +59,8 @@ struct batch_options {
 	char input_delim;
 	char output_delim;
 	const char *format;
+	size_t remote_max_batch;
+	unsigned custom_object_info_batch;
 };
 
 static const char *force_path;
@@ -799,9 +801,9 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 	char *line_to_split;
 	struct fetch_object_info_results results = FETCH_OBJECT_INFO_RESULTS_INIT;
 	struct oid_array object_info_oids = OID_ARRAY_INIT;
-	size_t batch_size = DEFAULT_REMOTE_BATCH_SIZE;
 	struct transport *transport;
 	struct remote *remote;
+	size_t object_nr;
 
 	line_to_split = xstrdup(line);
 	count = split_cmdline(line_to_split, &argv);
@@ -811,6 +813,7 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 
 	if (count < 2)
 		die(_("remote-object-info requires objects"));
+	object_nr = (size_t)count - 1;
 
 	if (data->info.sizep)
 		results.wants_size = 1;
@@ -826,12 +829,16 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 	if (!transport->smart_options)
 		die(_("smart options required"));
 
-	for (size_t j = 0; j < count - 1; j += batch_size) {
+	for (size_t j = 0; j < object_nr; j += opt->remote_max_batch) {
 		const char **objects = argv + 1 + j;
-		size_t remaining = count - 1 - j;
-		size_t objects_nr = batch_size < remaining ? batch_size : remaining;
+		size_t objects_in_batch_nr;
 
-		get_remote_info(transport, objects, objects_nr, &results, &object_info_oids);
+		if (opt->remote_max_batch < object_nr - j)
+			objects_in_batch_nr = opt->remote_max_batch;
+		else
+			objects_in_batch_nr = object_nr - j;
+
+		get_remote_info(transport, objects, objects_in_batch_nr, &results, &object_info_oids);
 
 		string_list_clear(&data->remote_allowed_atoms, 0);
 		string_list_append(&data->remote_allowed_atoms, "objectname");
@@ -1145,6 +1152,24 @@ static int git_cat_file_config(const char *var, const char *value,
 	return git_default_config(var, value, ctx, cb);
 }
 
+static int set_remote_batch_size(const struct option *opt,
+				 const char *arg,
+				 int unset)
+{
+	struct batch_options *bo = opt->value;
+	size_t n;
+
+	BUG_ON_OPT_NEG(unset);
+
+	if (!git_parse_size_t(arg, &n) || !n)
+		return error(_("%s expects a positive number"), opt->long_name);
+
+	bo->remote_max_batch = n;
+	bo->custom_object_info_batch = 1;
+
+	return 0;
+}
+
 static int batch_option_callback(const struct option *opt,
 				 const char *arg,
 				 int unset)
@@ -1184,6 +1209,7 @@ int cmd_cat_file(int argc,
 	const char *exp_type = NULL, *obj_name = NULL;
 	struct batch_options batch = {
 		.objects_filter = LIST_OBJECTS_FILTER_INIT,
+		.remote_max_batch = DEFAULT_REMOTE_BATCH_SIZE,
 	};
 	int unknown_type = 0;
 	int input_nul_terminated = 0;
@@ -1197,7 +1223,7 @@ int cmd_cat_file(int argc,
 		   "             [<rev>:<path|tree-ish> | --path=<path|tree-ish> <rev>]"),
 		N_("git cat-file (--batch | --batch-check | --batch-command) [--batch-all-objects]\n"
 		   "             [--buffer] [--follow-symlinks] [--unordered]\n"
-		   "             [--textconv | --filters] [-Z]"),
+		   "             [--textconv | --filters] [-Z] [--remote-max-batch=<n>]"),
 		NULL
 	};
 	const struct option options[] = {
@@ -1240,6 +1266,9 @@ int cmd_cat_file(int argc,
 			 N_("follow in-tree symlinks")),
 		OPT_BOOL(0, "unordered", &batch.unordered,
 			 N_("do not order objects before emitting them")),
+		OPT_CALLBACK_F(0, "remote-max-batch", &batch, N_("n"),
+			       N_("set a custom object-info batch size"),
+			       PARSE_OPT_NONEG, set_remote_batch_size),
 		/* Textconv options, stand-ole*/
 		OPT_GROUP(N_("Emit object (blob or tree) with conversion or filter (stand-alone, or with batch)")),
 		OPT_CMDMODE(0, "textconv", &opt,
@@ -1306,6 +1335,11 @@ int cmd_cat_file(int argc,
 	else if (nul_terminated)
 		usage_msg_optf(_("'%s' requires a batch mode"), builtin_catfile_usage,
 			       options, "-Z");
+
+	if (batch.custom_object_info_batch &&
+	    batch.batch_mode != BATCH_MODE_QUEUE_AND_DISPATCH)
+		usage_msg_optf(_("'%s' requires '%s'"), builtin_catfile_usage,
+			       options, "--remote-max-batch", "--batch-command");
 
 	batch.input_delim = batch.output_delim = '\n';
 	if (input_nul_terminated)
