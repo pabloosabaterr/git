@@ -39,12 +39,7 @@
  */
 #define MAX_REMOTE_URL_LEN (8 * 1024)
 
-/* Maximum number of objects allowed in a single remote-object-info request. */
-#define MAX_ALLOWED_OBJ_LIMIT 10000
-
-/* Maximum input size permitted for the remote-object-info command. */
-#define MAX_REMOTE_OBJ_INFO_LINE \
-	(MAX_REMOTE_URL_LEN + MAX_ALLOWED_OBJ_LIMIT * (GIT_MAX_HEXSZ + 1))
+#define DEFAULT_REMOTE_BATCH_SIZE 50000
 
 enum batch_mode {
 	BATCH_MODE_CONTENTS,
@@ -708,8 +703,7 @@ static void get_remote_info(struct transport *transport,
 		oid_array_append(object_info_oids, &oid);
 	}
 
-	if (transport_fetch_object_info(transport, object_info_oids, results))
-		die(_("failed to get object info from the remote"));
+	transport_fetch_object_info(transport, object_info_oids, results);
 }
 
 struct object_cb_data {
@@ -805,20 +799,15 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 	char *line_to_split;
 	struct fetch_object_info_results results = FETCH_OBJECT_INFO_RESULTS_INIT;
 	struct oid_array object_info_oids = OID_ARRAY_INIT;
+	size_t batch_size = DEFAULT_REMOTE_BATCH_SIZE;
 	struct transport *transport;
 	struct remote *remote;
-
-	if (strlen(line) >= MAX_REMOTE_OBJ_INFO_LINE)
-		die(_("remote-object-info command too long"));
 
 	line_to_split = xstrdup(line);
 	count = split_cmdline(line_to_split, &argv);
 	if (count < 0)
 		die(_("remote-object-info: failed to parse command line: %s"),
 		    split_cmdline_strerror(count));
-	if (count - 1 > MAX_ALLOWED_OBJ_LIMIT)
-		die(_("remote-object-info supports at most %d objects"),
-		    MAX_ALLOWED_OBJ_LIMIT);
 
 	if (count < 2)
 		die(_("remote-object-info requires objects"));
@@ -836,48 +825,58 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 
 	if (!transport->smart_options)
 		die(_("smart options required"));
-	get_remote_info(transport, argv + 1, count - 1, &results, &object_info_oids);
 
-	string_list_clear(&data->remote_allowed_atoms, 0);
-	string_list_append(&data->remote_allowed_atoms, "objectname");
-	if (results.sizes)
-		string_list_append(&data->remote_allowed_atoms, "objectsize");
-	if (results.types)
-		string_list_append(&data->remote_allowed_atoms, "objecttype");
+	for (size_t j = 0; j < count - 1; j += batch_size) {
+		const char **objects = argv + 1 + j;
+		size_t remaining = count - 1 - j;
+		size_t objects_nr = batch_size < remaining ? batch_size : remaining;
+
+		get_remote_info(transport, objects, objects_nr, &results, &object_info_oids);
+
+		string_list_clear(&data->remote_allowed_atoms, 0);
+		string_list_append(&data->remote_allowed_atoms, "objectname");
+		if (results.sizes)
+			string_list_append(&data->remote_allowed_atoms, "objectsize");
+		if (results.types)
+			string_list_append(&data->remote_allowed_atoms, "objecttype");
+
+		data->skip_object_info = 1;
+		for (size_t i = 0; i < results.nr; i++) {
+			data->oid = object_info_oids.oid[i];
+
+			if (results.unrecognized[i]) {
+				report_object_status(opt, oid_to_hex(&data->oid),
+						     &data->oid, "missing");
+				continue;
+			}
+
+			/*
+			 * When reaching here, it means remote-object-info can retrieve
+			 * information from server without downloading them.
+			 */
+			if (results.sizes)
+				data->size = results.sizes[i];
+
+			if (results.types)
+				data->type = results.types[i];
+
+			opt->batch_mode = BATCH_MODE_INFO;
+			data->is_remote = 1;
+			batch_object_write(objects[i], output, opt, data, NULL, 0);
+			data->is_remote = 0;
+		}
+		data->skip_object_info = 0;
+		FREE_AND_NULL(results.sizes);
+		FREE_AND_NULL(results.types);
+		FREE_AND_NULL(results.unrecognized);
+		results.nr = 0;
+		oid_array_clear(&object_info_oids);
+	}
 
 	transport_disconnect(transport);
-
-	data->skip_object_info = 1;
-	for (size_t i = 0; i < results.nr; i++) {
-		data->oid = object_info_oids.oid[i];
-
-		if (results.unrecognized[i]) {
-			report_object_status(opt, oid_to_hex(&data->oid),
-					     &data->oid, "missing");
-			continue;
-		}
-
-		/*
-		 * When reaching here, it means remote-object-info can retrieve
-		 * information from server without downloading them.
-		 */
-		if (results.sizes)
-			data->size = results.sizes[i];
-
-		if (results.types)
-			data->type = results.types[i];
-
-		opt->batch_mode = BATCH_MODE_INFO;
-		data->is_remote = 1;
-		batch_object_write(argv[i + 1], output, opt, data, NULL, 0);
-		data->is_remote = 0;
-	}
-	data->skip_object_info = 0;
-
 	free_fetch_object_info_results(&results);
 	free(line_to_split);
 	free(argv);
-	oid_array_clear(&object_info_oids);
 }
 
 static void dispatch_calls(struct batch_options *opt,
