@@ -680,55 +680,36 @@ out:
 	object_context_release(&ctx);
 }
 
-static int get_remote_info(int argc,
-			   const char **argv,
-			   struct fetch_object_info_results *results,
-			   struct oid_array *object_info_oids)
+static void get_remote_info(struct transport *transport,
+			    const char **objects,
+			    size_t nr,
+			    struct fetch_object_info_results *results,
+			    struct oid_array *object_info_oids)
 {
-	int retval = 0;
-	struct remote *remote = NULL;
 	struct object_id oid;
-	struct transport *gtransport;
-
-	remote = remote_get(argv[0]);
-	if (!remote)
-		die(_("must supply valid remote when using remote-object-info"));
 
 	oid_array_clear(object_info_oids);
-	for (size_t i = 1; i < argc; i++) {
-		if (get_oid_hex(argv[i], &oid)) {
-			size_t len = strlen(argv[i]);
+	for (size_t i = 0; i < nr; i++) {
+		if (get_oid_hex(objects[i], &oid)) {
+			size_t len = strlen(objects[i]);
 
 			if (len < the_hash_algo->hexsz && len >= 4) {
 				size_t j;
 				for (j = 0; j < len; j++)
-					if (!isxdigit(argv[i][j]))
+					if (!isxdigit(objects[i][j]))
 						break;
 				if (j == len)
 					die(_("remote-object-info does not support "
 					      "short oids, %d characters required"),
 					    (int)the_hash_algo->hexsz);
 			}
-			die(_("not a valid object name '%s'"), argv[i]);
+			die(_("not a valid object name '%s'"), objects[i]);
 		}
 		oid_array_append(object_info_oids, &oid);
 	}
 
-	if (!object_info_oids->nr)
-		die(_("remote-object-info requires objects"));
-
-	gtransport = transport_get(remote, NULL);
-
-	if (!gtransport->smart_options) {
-		retval = -1;
-		goto cleanup;
-	}
-
-	retval = transport_fetch_object_info(gtransport, object_info_oids,
-					     results);
-cleanup:
-	transport_disconnect(gtransport);
-	return retval;
+	if (transport_fetch_object_info(transport, object_info_oids, results))
+		die(_("failed to get object info from the remote"));
 }
 
 struct object_cb_data {
@@ -824,6 +805,8 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 	char *line_to_split;
 	struct fetch_object_info_results results = FETCH_OBJECT_INFO_RESULTS_INIT;
 	struct oid_array object_info_oids = OID_ARRAY_INIT;
+	struct transport *transport;
+	struct remote *remote;
 
 	if (strlen(line) >= MAX_REMOTE_OBJ_INFO_LINE)
 		die(_("remote-object-info command too long"));
@@ -837,13 +820,23 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 		die(_("remote-object-info supports at most %d objects"),
 		    MAX_ALLOWED_OBJ_LIMIT);
 
+	if (count < 2)
+		die(_("remote-object-info requires objects"));
+
 	if (data->info.sizep)
 		results.wants_size = 1;
 	if (data->info.typep)
 		results.wants_type = 1;
 
-	if (get_remote_info(count, argv, &results, &object_info_oids))
-		die(_("failed to get object info from the remote: %s"), argv[0]);
+	remote = remote_get(argv[0]);
+	if (!remote)
+		die(_("must supply valid remote when using remote-object-info"));
+
+	transport = transport_get(remote, NULL);
+
+	if (!transport->smart_options)
+		die(_("smart options required"));
+	get_remote_info(transport, argv + 1, count - 1, &results, &object_info_oids);
 
 	string_list_clear(&data->remote_allowed_atoms, 0);
 	string_list_append(&data->remote_allowed_atoms, "objectname");
@@ -851,6 +844,8 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 		string_list_append(&data->remote_allowed_atoms, "objectsize");
 	if (results.types)
 		string_list_append(&data->remote_allowed_atoms, "objecttype");
+
+	transport_disconnect(transport);
 
 	data->skip_object_info = 1;
 	for (size_t i = 0; i < results.nr; i++) {
