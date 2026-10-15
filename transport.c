@@ -447,8 +447,13 @@ static int fetch_object_info_via_pack(struct transport *transport,
 			   PACKET_READ_GENTLE_ON_EOF |
 			   PACKET_READ_DIE_ON_ERR_PACKET);
 
-	data->version = discover_version(&reader);
-	transport->hash_algo = reader.hash_algo;
+	if (!data->finished_handshake) {
+		data->version = discover_version(&reader);
+		transport->hash_algo = reader.hash_algo;
+		data->finished_handshake = 1;
+	} else {
+		reader.hash_algo = transport->hash_algo;
+	}
 
 	fetch_object_info(data->version,
 			  transport->server_options,
@@ -456,13 +461,6 @@ static int fetch_object_info_via_pack(struct transport *transport,
 			  &reader,
 			  results,
 			  transport->stateless_rpc, data->fd[1]);
-
-	close(data->fd[0]);
-	if (data->fd[1] >= 0)
-		close(data->fd[1]);
-	if (finish_connect(data->conn))
-		ret = -1;
-	data->conn = NULL;
 
 	return ret;
 }
