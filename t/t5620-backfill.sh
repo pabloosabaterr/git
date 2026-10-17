@@ -141,6 +141,54 @@ test_expect_success 'do partial clone 2, backfill min batch size' '
 	test_line_count = 0 revs2
 '
 
+test_expect_success '--dry-run reports missing blobs without fetching them' '
+	test_when_finished "rm -rf backfill-dry-run dry-trace" &&
+	git clone --no-checkout --filter=blob:none \
+		--single-branch --branch=main \
+		"file://$(pwd)/srv.bare" backfill-dry-run &&
+
+	GIT_TRACE2_EVENT="$(pwd)/dry-trace" git \
+		-C backfill-dry-run backfill --dry-run >out &&
+
+	test_grep "48 blobs would be fetched" out &&
+	test_grep ! fetch_count dry-trace &&
+	git -C backfill-dry-run rev-list --quiet --objects --missing=print HEAD >missing &&
+	test_line_count = 48 missing
+'
+
+test_expect_success '--dry-run with no missing blobs' '
+	test_when_finished rm -rf backfill-dry-run &&
+	git clone --no-checkout --filter=blob:none \
+		--single-branch --branch=main \
+		"file://$(pwd)/srv.bare" backfill-dry-run &&
+	git -C backfill-dry-run backfill &&
+
+	git -C backfill-dry-run backfill --dry-run >out &&
+	test_grep "0 blobs would be fetched" out
+'
+
+test_expect_success '--dry-run reports total size with object-info' '
+	test_config -C srv.bare transfer.advertiseobjectinfo true &&
+	test_when_finished rm -rf backfill-dry-run &&
+	git clone --no-checkout --filter=blob:none \
+		--single-branch --branch=main \
+		"file://$(pwd)/srv.bare" backfill-dry-run &&
+
+	git -C backfill-dry-run backfill --dry-run >out &&
+	test_grep "48 blobs would be fetched (.*)" out
+'
+
+test_expect_success '--dry-run reports only the count without object-info' '
+	test_config -C srv.bare transfer.advertiseobjectinfo false &&
+	test_when_finished rm -rf backfill-dry-run &&
+	git clone --no-checkout --filter=blob:none \
+		--single-branch --branch=main \
+		"file://$(pwd)/srv.bare" backfill-dry-run &&
+
+	git -C backfill-dry-run backfill --dry-run >out &&
+	test_grep "48 blobs would be fetched\.$" out
+'
+
 test_expect_success 'backfill --sparse without sparse-checkout fails' '
 	git init not-sparse &&
 	test_must_fail git -C not-sparse backfill --sparse 2>err &&
