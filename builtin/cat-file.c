@@ -39,12 +39,7 @@
  */
 #define MAX_REMOTE_URL_LEN (8 * 1024)
 
-/* Maximum number of objects allowed in a single remote-object-info request. */
-#define MAX_ALLOWED_OBJ_LIMIT 10000
-
-/* Maximum input size permitted for the remote-object-info command. */
-#define MAX_REMOTE_OBJ_INFO_LINE \
-	(MAX_REMOTE_URL_LEN + MAX_ALLOWED_OBJ_LIMIT * (GIT_MAX_HEXSZ + 1))
+#define DEFAULT_REMOTE_BATCH_SIZE 50000
 
 enum batch_mode {
 	BATCH_MODE_CONTENTS,
@@ -64,6 +59,8 @@ struct batch_options {
 	char input_delim;
 	char output_delim;
 	const char *format;
+	size_t remote_max_batch;
+	unsigned custom_object_info_batch;
 };
 
 static const char *force_path;
@@ -680,55 +677,35 @@ out:
 	object_context_release(&ctx);
 }
 
-static int get_remote_info(int argc,
-			   const char **argv,
-			   struct fetch_object_info_results *results,
-			   struct oid_array *object_info_oids)
+static void get_remote_info(struct transport *transport,
+			    const char **objects,
+			    size_t nr,
+			    struct fetch_object_info_results *results,
+			    struct oid_array *object_info_oids)
 {
-	int retval = 0;
-	struct remote *remote = NULL;
 	struct object_id oid;
-	struct transport *gtransport;
-
-	remote = remote_get(argv[0]);
-	if (!remote)
-		die(_("must supply valid remote when using remote-object-info"));
 
 	oid_array_clear(object_info_oids);
-	for (size_t i = 1; i < argc; i++) {
-		if (get_oid_hex(argv[i], &oid)) {
-			size_t len = strlen(argv[i]);
+	for (size_t i = 0; i < nr; i++) {
+		if (get_oid_hex(objects[i], &oid)) {
+			size_t len = strlen(objects[i]);
 
 			if (len < the_hash_algo->hexsz && len >= 4) {
 				size_t j;
 				for (j = 0; j < len; j++)
-					if (!isxdigit(argv[i][j]))
+					if (!isxdigit(objects[i][j]))
 						break;
 				if (j == len)
 					die(_("remote-object-info does not support "
 					      "short oids, %d characters required"),
 					    (int)the_hash_algo->hexsz);
 			}
-			die(_("not a valid object name '%s'"), argv[i]);
+			die(_("not a valid object name '%s'"), objects[i]);
 		}
 		oid_array_append(object_info_oids, &oid);
 	}
 
-	if (!object_info_oids->nr)
-		die(_("remote-object-info requires objects"));
-
-	gtransport = transport_get(remote, NULL);
-
-	if (!gtransport->smart_options) {
-		retval = -1;
-		goto cleanup;
-	}
-
-	retval = transport_fetch_object_info(gtransport, object_info_oids,
-					     results);
-cleanup:
-	transport_disconnect(gtransport);
-	return retval;
+	transport_fetch_object_info(transport, object_info_oids, results);
 }
 
 struct object_cb_data {
@@ -824,65 +801,89 @@ static void parse_cmd_remote_object_info(struct batch_options *opt,
 	char *line_to_split;
 	struct fetch_object_info_results results = FETCH_OBJECT_INFO_RESULTS_INIT;
 	struct oid_array object_info_oids = OID_ARRAY_INIT;
-
-	if (strlen(line) >= MAX_REMOTE_OBJ_INFO_LINE)
-		die(_("remote-object-info command too long"));
+	struct transport *transport;
+	struct remote *remote;
+	size_t object_nr;
 
 	line_to_split = xstrdup(line);
 	count = split_cmdline(line_to_split, &argv);
 	if (count < 0)
 		die(_("remote-object-info: failed to parse command line: %s"),
 		    split_cmdline_strerror(count));
-	if (count - 1 > MAX_ALLOWED_OBJ_LIMIT)
-		die(_("remote-object-info supports at most %d objects"),
-		    MAX_ALLOWED_OBJ_LIMIT);
+
+	if (count < 2)
+		die(_("remote-object-info requires objects"));
+	object_nr = (size_t)count - 1;
 
 	if (data->info.sizep)
 		results.wants_size = 1;
 	if (data->info.typep)
 		results.wants_type = 1;
 
-	if (get_remote_info(count, argv, &results, &object_info_oids))
-		die(_("failed to get object info from the remote: %s"), argv[0]);
+	remote = remote_get(argv[0]);
+	if (!remote)
+		die(_("must supply valid remote when using remote-object-info"));
 
-	string_list_clear(&data->remote_allowed_atoms, 0);
-	string_list_append(&data->remote_allowed_atoms, "objectname");
-	if (results.sizes)
-		string_list_append(&data->remote_allowed_atoms, "objectsize");
-	if (results.types)
-		string_list_append(&data->remote_allowed_atoms, "objecttype");
+	transport = transport_get(remote, NULL);
 
-	data->skip_object_info = 1;
-	for (size_t i = 0; i < results.nr; i++) {
-		data->oid = object_info_oids.oid[i];
+	if (!transport->smart_options)
+		die(_("smart options required"));
 
-		if (results.unrecognized[i]) {
-			report_object_status(opt, oid_to_hex(&data->oid),
-					     &data->oid, "missing");
-			continue;
-		}
+	for (size_t j = 0; j < object_nr; j += opt->remote_max_batch) {
+		const char **objects = argv + 1 + j;
+		size_t objects_in_batch_nr;
 
-		/*
-		 * When reaching here, it means remote-object-info can retrieve
-		 * information from server without downloading them.
-		 */
+		if (opt->remote_max_batch < object_nr - j)
+			objects_in_batch_nr = opt->remote_max_batch;
+		else
+			objects_in_batch_nr = object_nr - j;
+
+		get_remote_info(transport, objects, objects_in_batch_nr, &results, &object_info_oids);
+
+		string_list_clear(&data->remote_allowed_atoms, 0);
+		string_list_append(&data->remote_allowed_atoms, "objectname");
 		if (results.sizes)
-			data->size = results.sizes[i];
-
+			string_list_append(&data->remote_allowed_atoms, "objectsize");
 		if (results.types)
-			data->type = results.types[i];
+			string_list_append(&data->remote_allowed_atoms, "objecttype");
 
-		opt->batch_mode = BATCH_MODE_INFO;
-		data->is_remote = 1;
-		batch_object_write(argv[i + 1], output, opt, data, NULL, 0);
-		data->is_remote = 0;
+		data->skip_object_info = 1;
+		for (size_t i = 0; i < results.nr; i++) {
+			data->oid = object_info_oids.oid[i];
+
+			if (results.unrecognized[i]) {
+				report_object_status(opt, oid_to_hex(&data->oid),
+						     &data->oid, "missing");
+				continue;
+			}
+
+			/*
+			 * When reaching here, it means remote-object-info can retrieve
+			 * information from server without downloading them.
+			 */
+			if (results.sizes)
+				data->size = results.sizes[i];
+
+			if (results.types)
+				data->type = results.types[i];
+
+			opt->batch_mode = BATCH_MODE_INFO;
+			data->is_remote = 1;
+			batch_object_write(objects[i], output, opt, data, NULL, 0);
+			data->is_remote = 0;
+		}
+		data->skip_object_info = 0;
+		FREE_AND_NULL(results.sizes);
+		FREE_AND_NULL(results.types);
+		FREE_AND_NULL(results.unrecognized);
+		results.nr = 0;
+		oid_array_clear(&object_info_oids);
 	}
-	data->skip_object_info = 0;
 
+	transport_disconnect(transport);
 	free_fetch_object_info_results(&results);
 	free(line_to_split);
 	free(argv);
-	oid_array_clear(&object_info_oids);
 }
 
 static void dispatch_calls(struct batch_options *opt,
@@ -1151,6 +1152,24 @@ static int git_cat_file_config(const char *var, const char *value,
 	return git_default_config(var, value, ctx, cb);
 }
 
+static int set_remote_batch_size(const struct option *opt,
+				 const char *arg,
+				 int unset)
+{
+	struct batch_options *bo = opt->value;
+	size_t n;
+
+	BUG_ON_OPT_NEG(unset);
+
+	if (!git_parse_size_t(arg, &n) || !n)
+		return error(_("%s expects a positive number"), opt->long_name);
+
+	bo->remote_max_batch = n;
+	bo->custom_object_info_batch = 1;
+
+	return 0;
+}
+
 static int batch_option_callback(const struct option *opt,
 				 const char *arg,
 				 int unset)
@@ -1190,6 +1209,7 @@ int cmd_cat_file(int argc,
 	const char *exp_type = NULL, *obj_name = NULL;
 	struct batch_options batch = {
 		.objects_filter = LIST_OBJECTS_FILTER_INIT,
+		.remote_max_batch = DEFAULT_REMOTE_BATCH_SIZE,
 	};
 	int unknown_type = 0;
 	int input_nul_terminated = 0;
@@ -1203,7 +1223,7 @@ int cmd_cat_file(int argc,
 		   "             [<rev>:<path|tree-ish> | --path=<path|tree-ish> <rev>]"),
 		N_("git cat-file (--batch | --batch-check | --batch-command) [--batch-all-objects]\n"
 		   "             [--buffer] [--follow-symlinks] [--unordered]\n"
-		   "             [--textconv | --filters] [-Z]"),
+		   "             [--textconv | --filters] [-Z] [--remote-max-batch=<n>]"),
 		NULL
 	};
 	const struct option options[] = {
@@ -1246,6 +1266,9 @@ int cmd_cat_file(int argc,
 			 N_("follow in-tree symlinks")),
 		OPT_BOOL(0, "unordered", &batch.unordered,
 			 N_("do not order objects before emitting them")),
+		OPT_CALLBACK_F(0, "remote-max-batch", &batch, N_("n"),
+			       N_("set a custom object-info batch size"),
+			       PARSE_OPT_NONEG, set_remote_batch_size),
 		/* Textconv options, stand-ole*/
 		OPT_GROUP(N_("Emit object (blob or tree) with conversion or filter (stand-alone, or with batch)")),
 		OPT_CMDMODE(0, "textconv", &opt,
@@ -1312,6 +1335,11 @@ int cmd_cat_file(int argc,
 	else if (nul_terminated)
 		usage_msg_optf(_("'%s' requires a batch mode"), builtin_catfile_usage,
 			       options, "-Z");
+
+	if (batch.custom_object_info_batch &&
+	    batch.batch_mode != BATCH_MODE_QUEUE_AND_DISPATCH)
+		usage_msg_optf(_("'%s' requires '%s'"), builtin_catfile_usage,
+			       options, "--remote-max-batch", "--batch-command");
 
 	batch.input_delim = batch.output_delim = '\n';
 	if (input_nul_terminated)

@@ -61,6 +61,18 @@ set_transport_variables () {
 # Since "%(objecttype)" is currently not supported by the command remote-object-info ,
 # the filters are set to "%(objectname) %(objectsize)" in some test cases.
 
+test_expect_success '--remote-max-batch rejects zero and non-numbers' '
+	test_must_fail git cat-file --batch-command --remote-max-batch=0 </dev/null 2>err &&
+	test_grep "remote-max-batch expects a positive number" err &&
+	test_must_fail git cat-file --batch-command --remote-max-batch=foo </dev/null 2>err &&
+	test_grep "remote-max-batch expects a positive number" err
+'
+
+test_expect_success '--remote-max-batch requires --batch-command' '
+	test_must_fail git cat-file --batch-check --remote-max-batch=2 </dev/null 2>err &&
+	test_grep "requires .--batch-command." err
+'
+
 # Test --batch-command remote-object-info with 'git://' transport with
 # transfer.advertiseobjectinfo set to true, i.e. server has object-info capability
 . "$TEST_DIRECTORY"/lib-git-daemon.sh
@@ -129,6 +141,25 @@ test_expect_success 'batch-command remote-object-info git:// multiple sha1 per l
 		info $tree_oid
 		info $commit_oid
 		info $tag_oid
+		EOF
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'remote-object-info git:// across batch boundaries' '
+	(
+		set_transport_variables "$daemon_parent" &&
+		cd "$daemon_parent/daemon_client_empty" &&
+
+		echo "$hello_oid $hello_size" >expect &&
+		echo "$tree_oid $tree_size" >>expect &&
+		echo "$unstored_oid missing" >>expect &&
+		echo "$commit_oid $commit_size" >>expect &&
+		echo "$tag_oid $tag_size" >>expect &&
+
+		git cat-file --batch-command="%(objectname) %(objectsize)" \
+			--remote-max-batch=2 >actual <<-EOF &&
+		remote-object-info "$GIT_DAEMON_URL/parent" $hello_oid $tree_oid $unstored_oid $commit_oid $tag_oid
 		EOF
 		test_cmp expect actual
 	)
@@ -461,6 +492,25 @@ test_expect_success 'batch-command remote-object-info file:// default filter' '
 	)
 '
 
+test_expect_success 'remote-object-info file:// with objects a multiple of the batch size' '
+	(
+		set_transport_variables "server" &&
+		server_path="$(pwd)/server" &&
+		cd file_client_empty &&
+
+		echo "$hello_oid $hello_size" >expect &&
+		echo "$tree_oid $tree_size" >>expect &&
+		echo "$commit_oid $commit_size" >>expect &&
+		echo "$tag_oid $tag_size" >>expect &&
+
+		git cat-file --batch-command="%(objectname) %(objectsize)" \
+			--remote-max-batch=2 >actual <<-EOF &&
+		remote-object-info "file://${server_path}" $hello_oid $tree_oid $commit_oid $tag_oid
+		EOF
+		test_cmp expect actual
+	)
+'
+
 test_expect_success 'batch-command -Z remote-object-info file:// default filter' '
 	(
 		set_transport_variables "server" &&
@@ -738,6 +788,25 @@ test_expect_success 'remote-object-info fails on not providing OID' '
 		remote-object-info "$HTTPD_URL/smart/http_parent"
 		EOF
 		test_grep "remote-object-info requires objects" err
+	)
+'
+
+test_expect_success 'remote-object-info http:// across batch boundaries' '
+	(
+		set_transport_variables "$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+		cd "$HTTPD_DOCUMENT_ROOT_PATH/http_client_empty" &&
+
+		echo "$hello_oid $hello_size" >expect &&
+		echo "$tree_oid $tree_size" >>expect &&
+		echo "$unstored_oid missing" >>expect &&
+		echo "$commit_oid $commit_size" >>expect &&
+		echo "$tag_oid $tag_size" >>expect &&
+
+		git cat-file --batch-command="%(objectname) %(objectsize)" \
+			--remote-max-batch=2 >actual <<-EOF &&
+		remote-object-info "$HTTPD_URL/smart/http_parent" $hello_oid $tree_oid $unstored_oid $commit_oid $tag_oid
+		EOF
+		test_cmp expect actual
 	)
 '
 
